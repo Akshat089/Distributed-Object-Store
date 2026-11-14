@@ -1,1 +1,10 @@
 /target
+/data
+
+# Env files (keep the template)
+.env
+.env.*
+!.env.example
+
+# Test files
+*.bin
