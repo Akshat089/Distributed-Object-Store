@@ -13,7 +13,11 @@ use common::{
     AppError, AppResult, HashRing, ObjectId, ObjectMeta, WorkerId, WorkerStatus, WorkerView,
 };
 use dashmap::DashMap;
-use tokio::{fs, io::AsyncWriteExt};
+use tokio::{
+    fs,
+    io::AsyncWriteExt,
+    sync::{Mutex, Notify},
+};
 use tracing::{info, warn};
 
 pub type SharedState = Arc<AppState>;
@@ -74,6 +78,18 @@ pub struct AppState {
     pub objects: DashMap<ObjectId, ObjectMeta>,
     pub meta_store: MetaStore,
     pub http: reqwest::Client,
+    /// Wakes the repair loop (a worker died, a copy went missing, ...).
+    pub repair_notify: Notify,
+    /// Objects whose upload is still in progress. Their chunks already sit on
+    /// workers but the metadata isn't saved yet, so reconciliation must not
+    /// mistake them for orphans.
+    pub pending_uploads: DashMap<ObjectId, ()>,
+    /// Workers currently being reconciled (avoids running two at once).
+    pub reconciling: DashMap<WorkerId, ()>,
+    /// When the controller started. Right after a restart no worker has
+    /// registered yet, so every chunk *looks* under-replicated; repair waits
+    /// out a grace period instead of copying everything around.
+    pub started_at: Instant,
 }
 
 impl AppState {
@@ -97,7 +113,31 @@ impl AppState {
             objects: map,
             meta_store,
             http,
+            repair_notify: Notify::new(),
+            pending_uploads: DashMap::new(),
+            reconciling: DashMap::new(),
+            started_at: Instant::now(),
         })
+    }
+
+    /// Asks the repair loop to run soon.
+    pub fn request_repair(&self) {
+        self.repair_notify.notify_one();
+    }
+
+    /// Writes the *current* in-memory version of an object to disk.
+    ///
+    /// Several tasks (PATCH, repair, reconciliation) may change the same
+    /// object. Each one edits the DashMap entry, then calls this. Because the
+    /// clone is taken while holding the store's write lock, the last write to
+    /// disk always contains every change, never an older snapshot.
+    /// If the object was deleted in the meantime nothing is written.
+    pub async fn persist_object(&self, id: ObjectId) -> AppResult<()> {
+        let _guard = self.meta_store.write_lock.lock().await;
+        let Some(meta) = self.objects.get(&id).map(|o| o.clone()) else {
+            return Ok(());
+        };
+        self.meta_store.write_file(&meta).await
     }
 
     pub fn is_alive(&self, id: &str) -> bool {
@@ -174,6 +214,9 @@ impl AppState {
 
 pub struct MetaStore {
     dir: PathBuf,
+    /// Serialises all writes/deletes: they share `<id>.json.tmp` names, and
+    /// a delete must not race with a write that would bring the file back.
+    pub write_lock: Mutex<()>,
 }
 
 impl MetaStore {
@@ -201,7 +244,13 @@ impl MetaStore {
         }
 
         info!(dir = %dir.display(), objects = objects.len(), "metadata store opened");
-        Ok((Self { dir }, objects))
+        Ok((
+            Self {
+                dir,
+                write_lock: Mutex::new(()),
+            },
+            objects,
+        ))
     }
 
     fn path(&self, id: ObjectId) -> PathBuf {
@@ -209,6 +258,12 @@ impl MetaStore {
     }
 
     pub async fn save(&self, meta: &ObjectMeta) -> AppResult<()> {
+        let _guard = self.write_lock.lock().await;
+        self.write_file(meta).await
+    }
+
+    /// Caller must hold `write_lock`.
+    async fn write_file(&self, meta: &ObjectMeta) -> AppResult<()> {
         let json = serde_json::to_vec_pretty(meta)
             .map_err(|e| AppError::Internal(format!("serialize metadata: {e}")))?;
         let tmp = self.dir.join(format!("{}.json.tmp", meta.object_id));
@@ -221,6 +276,7 @@ impl MetaStore {
     }
 
     pub async fn delete(&self, id: ObjectId) -> AppResult<()> {
+        let _guard = self.write_lock.lock().await;
         match fs::remove_file(self.path(id)).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),

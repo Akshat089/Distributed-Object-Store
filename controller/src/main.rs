@@ -27,6 +27,7 @@ async fn main() -> std::io::Result<()> {
     let state = AppState::new(config, meta_store, objects);
 
     tokio::spawn(heartbeat::monitor(state.clone()));
+    tokio::spawn(replication::repair_loop(state.clone()));
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     info!("listening on 0.0.0.0:{port}");

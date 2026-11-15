@@ -1,0 +1,7 @@
+# Keep the build context small and free of secrets/local data.
+target
+data
+.git
+*.bin
+.env
+.env.*

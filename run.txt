@@ -26,6 +26,22 @@ CHECK A WORKER IS UP
 WIPE ALL STORED DATA
   Remove-Item -Recurse -Force .\data
 
+RUN WITH DOCKER (Phase 4+: 1 controller + 4 workers)
+  docker compose up -d --build        build image, start all 5 containers
+  curl.exe -s http://localhost:9000/api/v1/cluster      who is alive?
+  docker compose logs -f controller   watch DEAD / re-replicated / reconciliation
+  docker stop worker2                 simulate failure (Phase 5)
+  docker start worker2                recovery + reconciliation (Phase 6)
+  docker compose down                 stop (data kept in named volumes)
+  docker compose down -v              stop AND wipe all data
+
+  Workers are also reachable from the host for debugging:
+    worker1..4 -> localhost:8081..8084 (container port is 8081 for all)
+
+AUTOMATED TEST FOR PHASES 4-6
+  powershell -ExecutionPolicy Bypass -File scripts\test-phases-4-6.ps1
+  (add -NoBuild if the cluster is already running)
+
 NOTES
   - Use curl.exe, not curl, in PowerShell.
   - Port 8080 is used by another program on this PC, so the

@@ -79,6 +79,10 @@ async fn upload_object(
     let mut mp = multipart.map_err(|e| AppError::BadRequest(e.body_text()))?;
     let object_id = Uuid::new_v4();
 
+    // Tell reconciliation these chunks are not orphans (metadata not saved yet).
+    s.pending_uploads.insert(object_id, ());
+    let _pending = PendingGuard(&s, object_id);
+
     // Chunks already stored on workers — deleted again if anything fails.
     let mut stored: Vec<ChunkInfo> = Vec::new();
 
@@ -159,6 +163,16 @@ async fn upload_object(
             }
             Err(e)
         }
+    }
+}
+
+/// Removes an upload from `pending_uploads` when the handler returns,
+/// whichever way it returns (success, error, or client disconnect).
+struct PendingGuard<'a>(&'a SharedState, ObjectId);
+
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.pending_uploads.remove(&self.1);
     }
 }
 
@@ -340,7 +354,9 @@ async fn patch_metadata(
         entry.clone()
     }; // lock released before the disk write
 
-    s.meta_store.save(&updated).await?;
+    // Writes the latest in-memory version (repair may be editing locations
+    // of the same object concurrently).
+    s.persist_object(id).await?;
     info!(object_id = %id, "metadata updated");
     Ok(Json(updated))
 }
@@ -421,6 +437,9 @@ async fn register_worker(
         }
         Some(WorkerStatus::Alive) => info!(worker = %req.worker_id, "worker re-registered"),
     }
+    // A (re)starting worker may hold orphans, extra copies, or have lost
+    // chunks. Compare its disk with the metadata in the background.
+    tokio::spawn(replication::reconcile_worker(s.clone(), req.worker_id.clone()));
     Json(RegisterResponse {
         worker_id: req.worker_id,
         heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
@@ -437,7 +456,9 @@ async fn heartbeat(
         return Json(HeartbeatResponse { reregister: true });
     }
     if s.upsert_worker(&req.worker_id, &req.address) == Some(WorkerStatus::Dead) {
+        // Was unreachable (e.g. network partition / paused) but never restarted.
         info!(worker = %req.worker_id, "worker is BACK (heartbeat resumed)");
+        tokio::spawn(replication::reconcile_worker(s.clone(), req.worker_id.clone()));
     }
     if let Some(mut w) = s.workers.get_mut(&req.worker_id) {
         w.chunk_count = req.chunk_count;
