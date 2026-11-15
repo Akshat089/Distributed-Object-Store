@@ -127,9 +127,18 @@ $back = WaitFor { ((Cluster).workers | Where-Object worker_id -eq "worker2").sta
 Check $back "worker2 re-registered and is alive again"
 
 # Reconciliation runs right after registration; give it a moment.
-$expected = @()
-foreach ($ch in (Meta $a.object_id).chunks) { if ($ch.locations -contains "worker2") { $expected += $ch.chunk_id } }
+# Compare against EVERY object (earlier runs may have left objects behind).
+function ListedFor($worker) {
+    $ids = @()
+    foreach ($o in (Invoke-RestMethod "$Controller/api/v1/objects?limit=1000").objects) {
+        foreach ($ch in (Meta $o.object_id).chunks) {
+            if ($ch.locations -contains $worker) { $ids += $ch.chunk_id }
+        }
+    }
+    return $ids
+}
 $settled = WaitFor {
+    $expected = ListedFor "worker2"
     $held = @(WorkerChunks 8082 "worker2" | ForEach-Object { $_.chunk_id })
     (@($held | Where-Object { $expected -notcontains $_ })).Count -eq 0
 } 30 "worker2 holds only chunks listed in metadata"
