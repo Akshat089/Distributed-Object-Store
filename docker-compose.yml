@@ -15,7 +15,6 @@ name: distributed-object-store
 
 # Settings shared by every worker (YAML anchor, merged with <<: below).
 x-worker: &worker
-  build: .
   image: distributed-object-store:latest
   command: ["worker"]
   restart: unless-stopped
