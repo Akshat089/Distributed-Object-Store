@@ -1,7 +1,7 @@
 mod heartbeat;
 mod routes;
 mod state;
-
+mod scrubber; 
 use state::{AppState, ChunkStore, Config};
 use tokio::net::TcpListener;
 use tracing::info;
@@ -27,6 +27,7 @@ async fn main() -> std::io::Result<()> {
     let state = AppState::new(config, store);
 
     tokio::spawn(heartbeat::run(state.clone()));
+    tokio::spawn(scrubber::run(state.clone()));
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     info!("listening on 0.0.0.0:{port}");

@@ -56,6 +56,7 @@ services:
       PORT: "8081"
       ADVERTISE_ADDR: http://worker1:8081
       CONTROLLER_URL: http://controller:9000
+      SCRUB_INTERVAL_SECS: "10"
       DATA_DIR: /data
       RUST_LOG: info
     ports:
@@ -71,6 +72,7 @@ services:
       PORT: "8081"
       ADVERTISE_ADDR: http://worker2:8081
       CONTROLLER_URL: http://controller:9000
+      SCRUB_INTERVAL_SECS: "10"
       DATA_DIR: /data
       RUST_LOG: info
     ports:
@@ -86,6 +88,7 @@ services:
       PORT: "8081"
       ADVERTISE_ADDR: http://worker3:8081
       CONTROLLER_URL: http://controller:9000
+      SCRUB_INTERVAL_SECS: "10"
       DATA_DIR: /data
       RUST_LOG: info
     ports:
@@ -101,6 +104,7 @@ services:
       PORT: "8081"
       ADVERTISE_ADDR: http://worker4:8081
       CONTROLLER_URL: http://controller:9000
+      SCRUB_INTERVAL_SECS: "10"
       DATA_DIR: /data
       RUST_LOG: info
     ports:

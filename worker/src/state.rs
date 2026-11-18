@@ -43,6 +43,8 @@ pub struct Config {
     pub advertise_addr: String,
     pub controller_url: String,
     pub data_dir: PathBuf,
+    /// How often the scrubber re-checks every chunk. Zero disables it.
+    pub scrub_interval: Duration,
 }
 
 impl Config {
@@ -61,12 +63,18 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(format!("./data/{worker_id}")));
 
+        let scrub_secs: u64 = env::var("SCRUB_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
         Self {
             worker_id,
             port,
             advertise_addr: advertise_addr.trim_end_matches('/').to_string(),
             controller_url: controller_url.trim_end_matches('/').to_string(),
             data_dir,
+            scrub_interval: Duration::from_secs(scrub_secs),
         }
     }
 }
@@ -85,6 +93,10 @@ impl Config {
 pub struct ChunkStore {
     dir: PathBuf,
     index: DashMap<String, StoredChunk>,
+    /// Chunks that were in the index but whose file turned out to be gone.
+    /// They're removed from the index, so the scrubber can't find them by
+    /// listing; it reports these to the controller instead.
+    lost: DashMap<String, ()>,
 }
 
 impl ChunkStore {
@@ -127,7 +139,11 @@ impl ChunkStore {
         }
 
         info!(dir = %dir.display(), chunks = index.len(), "chunk store opened");
-        Ok(Self { dir, index })
+        Ok(Self {
+            dir,
+            index,
+            lost: DashMap::new(),
+        })
     }
 
     fn data_path(&self, id: &str) -> PathBuf {
@@ -173,6 +189,7 @@ impl ChunkStore {
             checksum: actual,
         };
         self.index.insert(id.to_string(), stored.clone());
+        self.lost.remove(id); // restored
         Ok(stored)
     }
 
@@ -188,8 +205,10 @@ impl ChunkStore {
         let data = match fs::read(self.data_path(id)).await {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // File vanished behind our back.
+                // File vanished behind our back. Remember it so the
+                // scrubber reports it and the controller restores it.
                 self.index.remove(id);
+                self.lost.insert(id.to_string(), ());
                 return Err(AppError::NotFound(format!("chunk {id} not found")));
             }
             Err(e) => return Err(e.into()),
@@ -207,6 +226,7 @@ impl ChunkStore {
 
     pub async fn delete(&self, id: &str) -> AppResult<()> {
         Self::check_id(id)?;
+        self.lost.remove(id);
         if self.index.remove(id).is_none() {
             return Err(AppError::NotFound(format!("chunk {id} not found")));
         }
@@ -218,6 +238,20 @@ impl ChunkStore {
             }
         }
         Ok(())
+    }
+
+    /// Chunks found missing since the last call (and not restored since).
+    pub fn take_lost(&self) -> Vec<String> {
+        let ids: Vec<String> = self.lost.iter().map(|e| e.key().clone()).collect();
+        for id in &ids {
+            self.lost.remove(id);
+        }
+        ids
+    }
+
+    /// Takes one chunk off the lost list; true if it was on it.
+    pub fn take_lost_one(&self, id: &str) -> bool {
+        self.lost.remove(id).is_some()
     }
 
     pub fn list(&self) -> Vec<StoredChunk> {

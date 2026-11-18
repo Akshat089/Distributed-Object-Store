@@ -4,7 +4,10 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -90,6 +93,35 @@ pub struct AppState {
     /// registered yet, so every chunk *looks* under-replicated; repair waits
     /// out a grace period instead of copying everything around.
     pub started_at: Instant,
+    /// `<chunk_id>@<worker>` pairs whose bad copy is being repaired right now,
+    /// so a download and the scrubber don't repair the same copy twice.
+    pub corrupt_repairs: DashMap<String, ()>,
+    /// Bad copies seen but not yet repaired (so a copy that can't be fixed
+    /// isn't counted again every time a scrubber re-reports it).
+    pub known_bad: DashMap<String, ()>,
+    /// Counters shown in `GET /api/v1/cluster` (Phase 7 demo).
+    pub integrity: IntegrityStats,
+}
+
+#[derive(Debug, Default)]
+pub struct IntegrityStats {
+    pub detected: AtomicU64,
+    pub repaired: AtomicU64,
+}
+
+impl IntegrityStats {
+    pub fn detected(&self) -> u64 {
+        self.detected.load(Ordering::Relaxed)
+    }
+    pub fn repaired(&self) -> u64 {
+        self.repaired.load(Ordering::Relaxed)
+    }
+    pub fn add_detected(&self) {
+        self.detected.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn add_repaired(&self) {
+        self.repaired.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl AppState {
@@ -117,6 +149,9 @@ impl AppState {
             pending_uploads: DashMap::new(),
             reconciling: DashMap::new(),
             started_at: Instant::now(),
+            corrupt_repairs: DashMap::new(),
+            known_bad: DashMap::new(),
+            integrity: IntegrityStats::default(),
         })
     }
 

@@ -16,10 +16,11 @@ use axum::{
 use bytes::BytesMut;
 use chrono::Utc;
 use common::{
-    AppError, AppResult, CHUNK_SIZE, ChunkInfo, ClusterStatus, HEARTBEAT_INTERVAL_MS,
+    AppError, AppResult, CHUNK_SIZE, ChunkInfo, ClusterStatus, CorruptChunkReport,
+    HEARTBEAT_INTERVAL_MS,
     HeartbeatRequest, HeartbeatResponse, ListObjectsResponse, ListQuery, MetadataPatch, ObjectId,
     ObjectMeta, REPLICATION_FACTOR, RegisterRequest, RegisterResponse, StreamingHash,
-    WorkerStatus,
+    WorkerStatus, parse_chunk_id,
 };
 use futures::StreamExt;
 use tokio::task::JoinSet;
@@ -52,7 +53,8 @@ pub fn router(state: SharedState) -> Router {
 
     let internal = Router::new()
         .route("/workers/register", post(register_worker))
-        .route("/workers/heartbeat", post(heartbeat));
+        .route("/workers/heartbeat", post(heartbeat))
+        .route("/chunks/corrupt", post(report_corrupt));
 
     Router::new()
         .nest("/api/v1", api)
@@ -420,6 +422,8 @@ async fn cluster_status(State(s): State<SharedState>) -> Json<ClusterStatus> {
         chunk_count,
         under_replicated_chunks: under,
         unavailable_chunks: unavailable,
+        corrupt_copies_detected: s.integrity.detected(),
+        corrupt_copies_repaired: s.integrity.repaired(),
     })
 }
 
@@ -465,4 +469,23 @@ async fn heartbeat(
         w.bytes_used = req.bytes_used;
     }
     Json(HeartbeatResponse { reregister: false })
+}
+
+/// POST /internal/chunks/corrupt — a worker's scrubber found a copy that
+/// fails its checksum (or vanished from disk). Repair runs in the background.
+async fn report_corrupt(
+    State(s): State<SharedState>,
+    Json(r): Json<CorruptChunkReport>,
+) -> AppResult<StatusCode> {
+    let (object_id, _) = parse_chunk_id(&r.chunk_id)
+        .ok_or_else(|| AppError::BadRequest(format!("invalid chunk id '{}'", r.chunk_id)))?;
+    warn!(worker = %r.worker_id, chunk_id = %r.chunk_id, "scrubber reported a bad copy");
+    tokio::spawn(replication::repair_bad_copy(
+        s.clone(),
+        object_id,
+        r.chunk_id,
+        r.worker_id,
+        None,
+    ));
+    Ok(StatusCode::ACCEPTED)
 }
