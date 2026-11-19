@@ -11,7 +11,7 @@ End-to-end test for Phases 4-6 (Windows PowerShell 5.1+, Docker Desktop running)
 
 Run from the repo root:
     powershell -ExecutionPolicy Bypass -File scripts\test-phases-4-6.ps1
-Add -NoBuild to skip `docker compose up --build`.
+Add -NoBuild to skip `docker build` (use it when the image is already current).
 #>
 param(
     [string]$Controller = "http://localhost:9000",
@@ -77,7 +77,9 @@ New-Item -ItemType Directory -Force $WorkDir | Out-Null
 
 # ───────────────────────────── Phase 4 ─────────────────────────────
 Step "Phase 4: start cluster"
-if (-not $NoBuild) { docker compose up -d --build }
+# All 5 services share one image; build it once, explicitly.
+if (-not $NoBuild) { docker build -t distributed-object-store:latest . }
+docker compose up -d | Out-Null
 $up = WaitFor { (@((Cluster).workers | Where-Object status -eq "alive")).Count -eq 4 } 90 "4 alive workers"
 Check $up "controller sees 4 alive workers"
 (Cluster).workers | Format-Table worker_id, status, chunk_count, address -AutoSize | Out-Host
