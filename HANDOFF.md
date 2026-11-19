@@ -116,8 +116,12 @@ Results of this run are in section 5.
 
 ## 4. Things that will bite you
 
-- **Rebuild the image after every code change** (`docker build ...`, then
-  `docker compose up -d --force-recreate`). Compose does not rebuild it for you.
+- **Rebuild the image after every code change**: `docker compose up -d --build`
+  (or `docker build ...` then `docker compose up -d --force-recreate`). Plain
+  `docker compose up -d` reuses the old image. The old warning about parallel builds
+  colliding no longer applies: only the controller service has `build:`, so
+  compose builds the image once and the workers reuse it (tested from scratch with no image).
+  (Note: compose has no `pull_policy: never`, despite what the old handoff said; it isn't needed.)
 - **`docker compose down -v` deletes everything**, and if only the controller's
   volume is lost, reconciliation deletes every chunk as an orphan.
 - PowerShell: use **`curl.exe`**; pass JSON through a file (PS 5.1 strips quotes).
@@ -131,7 +135,31 @@ Results of this run are in section 5.
 
 ## 5. Verification results
 
-_Filled in after the final clean run; see the commit that updated this section._
+Run on 2026-11-19 (Windows 11, Docker Desktop with engine 29.9.3, Rust 1.90), starting from
+`docker compose down -v` with the image deleted. A plain `docker compose up -d` rebuilt
+it from scratch.
+
+| Check | Result |
+|---|---|
+| `scripts\check.ps1` (fmt, clippy `-D warnings`, 11 unit tests) | ALL CHECKS PASSED |
+| `scripts\test-phases-4-6.ps1` | 15/15 passed |
+| `scripts\test-phase-7.ps1` | 12/12 passed |
+| `scripts\test-edge-cases.ps1` | 30/30 passed |
+| `scripts\demo.ps1 -Fast` | all 13 steps OK. worker2 DEAD after ~5 s; re-replication done ~5.5 s after `docker stop` |
+
+**One unexplained slow repair (seen once, not reproduced).** In one demo run started a few
+seconds after `test-edge-cases.ps1` had stopped and restarted workers 2–4, one chunk's
+re-replication took ~80 s instead of ~1 s:
+- DEAD detection was on time, and the other chunks in the same sweep were repaired in 2 s;
+- no request failed or timed out (each worker call has a 15 s timeout and failures are logged);
+- the data stayed correct and the cluster healed by itself.
+
+Three attempts to reproduce it, including the same stop/restart sequence, all repaired
+within a second. The most likely cause is the Docker Desktop network settling after a burst
+of container restarts, but that isn't proven. Mitigation: the demo's API calls now have
+timeouts and longer waits. **Before presenting, start the cluster and leave it idle for a
+few seconds instead of running the test suites right before the demo.** If it happens again,
+`docker compose logs controller` around the `repair sweep finished` line is where to look.
 
 ---
 

@@ -81,8 +81,10 @@ Stop the cluster with `docker compose down`. Data is kept in named volumes, so
 the next `docker compose up -d` finds every object again.
 `docker compose down -v` also **deletes all stored data**.
 
-Rebuild the image (`docker build ...` then `docker compose up -d --force-recreate`)
-after every code change.
+After every code change, rebuild and restart with `docker compose up -d --build`
+(compose builds the shared image once, through the controller service; the
+workers reuse it). `docker build ...` followed by `docker compose up -d --force-recreate`
+does the same thing in two steps.
 
 ---
 
@@ -380,6 +382,6 @@ docker-compose.yml       controller + worker1..worker4, one named volume each
 | `curl` gives odd PowerShell errors | Use `curl.exe` |
 | JSON in a command is rejected (400) | PowerShell 5.1 strips quotes; put the JSON in a file (`-d "@file.json"`) |
 | Port 9000 or 8081–8084 already in use | Change the left side of `ports:` in `docker-compose.yml` |
-| Code changes don't show up | `docker build -t distributed-object-store:latest .` then `docker compose up -d --force-recreate` |
+| Code changes don't show up | `docker compose up -d --build` |
 | Upload returns 503 right after start | Workers are still registering; wait until `/api/v1/cluster/status` shows 4 alive |
 | `docker compose down -v` lost everything | Expected: it deletes the volumes (see limitations) |
