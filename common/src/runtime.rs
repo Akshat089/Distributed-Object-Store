@@ -27,11 +27,23 @@ pub fn load_env_file() -> String {
 }
 
 /// Logging to stdout. The level comes from `RUST_LOG` (default `info`).
+///
+/// Colours are on only when stdout is a terminal (`cargo run`), so
+/// `docker logs` shows plain text instead of `[2m...[0m` escape codes.
+/// `LOG_COLOR=1` / `LOG_COLOR=0` forces them on / off.
 pub fn init_tracing() {
+    use std::io::IsTerminal;
+
+    let ansi = match std::env::var("LOG_COLOR").as_deref() {
+        Ok("1" | "true") => true,
+        Ok("0" | "false") => false,
+        _ => std::io::stdout().is_terminal(),
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        .with_ansi(ansi)
         .init();
 }
 
