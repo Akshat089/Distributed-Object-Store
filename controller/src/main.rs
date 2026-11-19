@@ -4,6 +4,7 @@ mod meta_store;
 mod replication;
 mod routes;
 mod state;
+mod worker_client;
 
 use common::runtime::{init_tracing, load_env_file, shutdown_signal};
 use config::Config;

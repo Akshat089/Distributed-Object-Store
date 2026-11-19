@@ -34,96 +34,18 @@ use std::{
 
 use bytes::Bytes;
 use common::{
-    AppError, AppResult, CHECKSUM_HEADER, ChunkId, ChunkInfo, ObjectId, REPAIR_CONCURRENCY,
-    REPAIR_INTERVAL, REPLICATION_FACTOR, STARTUP_GRACE, WorkerChunkList, WorkerId, make_chunk_id,
-    parse_chunk_id, sha256_hex,
+    AppError, AppResult, ChunkId, ChunkInfo, ObjectId, REPAIR_CONCURRENCY, REPAIR_INTERVAL,
+    REPLICATION_FACTOR, STARTUP_GRACE, WorkerId, make_chunk_id, parse_chunk_id, sha256_hex,
 };
 use futures::StreamExt;
-use reqwest::StatusCode;
 use tracing::{debug, error, info, warn};
 
-use crate::state::SharedState;
-
-// ─────────────────────────────── Low-level worker calls ───────────────
-
-pub async fn put_chunk_on(
-    s: &SharedState,
-    worker: &str,
-    chunk_id: &str,
-    data: Bytes,
-    checksum: &str,
-) -> Result<(), String> {
-    let addr = s
-        .worker_addr(worker)
-        .ok_or_else(|| format!("unknown worker {worker}"))?;
-    let resp = s
-        .http
-        .put(format!("{addr}/internal/chunks/{chunk_id}"))
-        .header(CHECKSUM_HEADER, checksum)
-        .body(data)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        Err(format!("{status}: {body}"))
-    }
-}
-
-pub enum FetchError {
-    /// The worker has the chunk but its bytes fail the checksum (HTTP 409).
-    Corrupted,
-    /// The worker should have the chunk but doesn't (HTTP 404).
-    Missing,
-    /// Unreachable, timeout, 5xx, ...
-    Other(String),
-}
-
-pub async fn get_chunk_from(
-    s: &SharedState,
-    worker: &str,
-    chunk_id: &str,
-) -> Result<Bytes, FetchError> {
-    let addr = s
-        .worker_addr(worker)
-        .ok_or_else(|| FetchError::Other(format!("unknown worker {worker}")))?;
-    let resp = s
-        .http
-        .get(format!("{addr}/internal/chunks/{chunk_id}"))
-        .send()
-        .await
-        .map_err(|e| FetchError::Other(e.to_string()))?;
-    match resp.status() {
-        StatusCode::OK => resp
-            .bytes()
-            .await
-            .map_err(|e| FetchError::Other(e.to_string())),
-        StatusCode::CONFLICT => Err(FetchError::Corrupted),
-        StatusCode::NOT_FOUND => Err(FetchError::Missing),
-        other => Err(FetchError::Other(format!("HTTP {other}"))),
-    }
-}
-
-pub async fn delete_chunk_on(s: &SharedState, worker: &str, chunk_id: &str) -> Result<(), String> {
-    let addr = s
-        .worker_addr(worker)
-        .ok_or_else(|| format!("unknown worker {worker}"))?;
-    let resp = s
-        .http
-        .delete(format!("{addr}/internal/chunks/{chunk_id}"))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    // 404 = already gone, which is what we wanted.
-    if resp.status().is_success() || resp.status() == StatusCode::NOT_FOUND {
-        Ok(())
-    } else {
-        Err(format!("HTTP {}", resp.status()))
-    }
-}
+use crate::{
+    state::SharedState,
+    worker_client::{
+        FetchError, delete_chunk_on, get_chunk_from, list_worker_chunks, put_chunk_on,
+    },
+};
 
 // ─────────────────────────────── High-level operations ────────────────
 
@@ -249,25 +171,6 @@ pub async fn delete_chunks(s: &SharedState, chunks: &[ChunkInfo]) {
     for t in tasks {
         let _ = t.await;
     }
-}
-
-/// Lists the chunks a worker actually has on disk.
-pub async fn list_worker_chunks(s: &SharedState, worker: &str) -> Result<WorkerChunkList, String> {
-    let addr = s
-        .worker_addr(worker)
-        .ok_or_else(|| format!("unknown worker {worker}"))?;
-    let resp = s
-        .http
-        .get(format!("{addr}/internal/workers/{worker}/chunks"))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<WorkerChunkList>()
-        .await
-        .map_err(|e| format!("bad chunk list: {e}"))
 }
 
 /// Reads a chunk from the first of `holders` that returns a verified copy.
