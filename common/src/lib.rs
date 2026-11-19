@@ -1,30 +1,17 @@
 //! Shared types and helpers used by both the controller and the workers.
 
+pub mod constants;
 pub mod errors;
 pub mod models;
 pub mod ring;
 pub mod runtime;
 
+pub use constants::*;
 pub use errors::{AppError, AppResult};
 pub use models::*;
 pub use ring::HashRing;
 
 use sha2::{Digest, Sha256};
-
-/// Size of every chunk except (possibly) the last one: 1 MiB.
-pub const CHUNK_SIZE: usize = 1024 * 1024;
-
-/// Number of copies each chunk must have during normal operation.
-pub const REPLICATION_FACTOR: usize = 2;
-
-/// Header carrying the SHA-256 (hex) of a chunk body on internal PUT/GET.
-pub const CHECKSUM_HEADER: &str = "x-chunk-checksum";
-
-/// How often workers send heartbeats.
-pub const HEARTBEAT_INTERVAL_MS: u64 = 2_000;
-
-/// A worker with no heartbeat for this long is considered dead.
-pub const HEARTBEAT_TIMEOUT_MS: u64 = 6_000;
 
 /// Lowercase hex SHA-256 of `data`.
 pub fn sha256_hex(data: &[u8]) -> String {

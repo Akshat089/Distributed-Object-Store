@@ -17,10 +17,10 @@ use bytes::BytesMut;
 use chrono::Utc;
 use common::{
     AppError, AppResult, CHUNK_SIZE, ChunkInfo, ClusterStatus, CorruptChunkReport,
-    HEARTBEAT_INTERVAL_MS,
-    HeartbeatRequest, HeartbeatResponse, ListObjectsResponse, ListQuery, MetadataPatch, ObjectId,
-    ObjectMeta, REPLICATION_FACTOR, RegisterRequest, RegisterResponse, StreamingHash,
-    WorkerStatus, parse_chunk_id,
+    DOWNLOAD_PREFETCH, HEARTBEAT_INTERVAL_MS, HeartbeatRequest, HeartbeatResponse,
+    ListObjectsResponse, ListQuery, MAX_INFLIGHT_CHUNKS, MetadataPatch, ObjectId, ObjectMeta,
+    REPLICATION_FACTOR, RegisterRequest, RegisterResponse, StreamingHash, WorkerStatus,
+    parse_chunk_id,
 };
 use futures::StreamExt;
 use tokio::task::JoinSet;
@@ -28,11 +28,6 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{replication, state::SharedState};
-
-/// How many chunks of one upload are sent to workers at the same time.
-const MAX_INFLIGHT_CHUNKS: usize = 8;
-/// How many chunks of one download are fetched ahead.
-const DOWNLOAD_PREFETCH: usize = 4;
 
 pub fn router(state: SharedState) -> Router {
     let max_upload = state.config.max_upload_bytes;

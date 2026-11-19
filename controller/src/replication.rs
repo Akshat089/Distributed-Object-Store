@@ -34,26 +34,15 @@ use std::{
 
 use bytes::Bytes;
 use common::{
-    AppError, AppResult, CHECKSUM_HEADER, ChunkId, ChunkInfo, HEARTBEAT_TIMEOUT_MS, ObjectId,
-    REPLICATION_FACTOR, WorkerChunkList, WorkerId, make_chunk_id, parse_chunk_id, sha256_hex,
+    AppError, AppResult, CHECKSUM_HEADER, ChunkId, ChunkInfo, ObjectId, REPAIR_CONCURRENCY,
+    REPAIR_INTERVAL, REPLICATION_FACTOR, STARTUP_GRACE, WorkerChunkList, WorkerId, make_chunk_id,
+    parse_chunk_id, sha256_hex,
 };
 use futures::StreamExt;
 use reqwest::StatusCode;
 use tracing::{debug, error, info, warn};
 
 use crate::state::SharedState;
-
-/// The repair sweep runs at least this often, even if nothing asked for it
-/// (catches repairs that failed earlier, e.g. while no spare worker existed).
-const REPAIR_INTERVAL: Duration = Duration::from_secs(10);
-/// How many chunks are repaired at the same time.
-const REPAIR_CONCURRENCY: usize = 8;
-
-/// After a controller restart, wait this long for workers to re-register
-/// before deciding that chunks are under-replicated.
-fn startup_grace() -> Duration {
-    Duration::from_millis(HEARTBEAT_TIMEOUT_MS * 2)
-}
 
 // ─────────────────────────────── Low-level worker calls ───────────────
 
@@ -329,8 +318,8 @@ pub async fn repair_loop(s: SharedState) {
         }
 
         let since_start = s.started_at.elapsed();
-        if since_start < startup_grace() {
-            tokio::time::sleep(startup_grace() - since_start).await;
+        if since_start < STARTUP_GRACE {
+            tokio::time::sleep(STARTUP_GRACE - since_start).await;
         }
 
         let r = repair_under_replicated(&s).await;

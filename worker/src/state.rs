@@ -8,7 +8,9 @@ use std::{
 };
 
 use bytes::Bytes;
-use common::{AppError, AppResult, StoredChunk, is_valid_chunk_id, sha256_hex};
+use common::{
+    AppError, AppResult, DEFAULT_SCRUB_INTERVAL_SECS, StoredChunk, is_valid_chunk_id, sha256_hex,
+};
 use dashmap::DashMap;
 use tokio::{fs, io::AsyncWriteExt};
 use tracing::{info, warn};
@@ -66,7 +68,7 @@ impl Config {
         let scrub_secs: u64 = env::var("SCRUB_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(30);
+            .unwrap_or(DEFAULT_SCRUB_INTERVAL_SECS);
 
         Self {
             worker_id,

@@ -6,14 +6,14 @@
 
 use std::time::Duration;
 
-use common::{HEARTBEAT_TIMEOUT_MS, WorkerStatus};
+use common::{FAILURE_CHECK_INTERVAL, HEARTBEAT_TIMEOUT_MS, WorkerStatus};
 use tracing::warn;
 
 use crate::state::SharedState;
 
 pub async fn monitor(state: SharedState) {
     let timeout = Duration::from_millis(HEARTBEAT_TIMEOUT_MS);
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let mut tick = tokio::time::interval(FAILURE_CHECK_INTERVAL);
 
     loop {
         tick.tick().await;
