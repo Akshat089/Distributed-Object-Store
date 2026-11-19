@@ -3,6 +3,7 @@
 pub mod errors;
 pub mod models;
 pub mod ring;
+pub mod runtime;
 
 pub use errors::{AppError, AppResult};
 pub use models::*;

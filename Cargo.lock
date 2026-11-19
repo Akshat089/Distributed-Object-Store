@@ -177,11 +177,15 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "dotenvy",
  "hex",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -194,7 +198,6 @@ dependencies = [
  "chrono",
  "common",
  "dashmap",
- "dotenvy",
  "futures",
  "mime_guess",
  "reqwest",
@@ -202,7 +205,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -1856,13 +1858,11 @@ dependencies = [
  "bytes",
  "common",
  "dashmap",
- "dotenvy",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
