@@ -1,10 +1,14 @@
+mod config;
 mod heartbeat;
+mod meta_store;
 mod replication;
 mod routes;
 mod state;
 
 use common::runtime::{init_tracing, load_env_file, shutdown_signal};
-use state::{AppState, Config, MetaStore};
+use config::Config;
+use meta_store::MetaStore;
+use state::AppState;
 use tokio::net::TcpListener;
 use tracing::info;
 
