@@ -2,7 +2,7 @@
 //! repair loop so their chunks get copied elsewhere (Phase 5).
 //!
 //! The opposite direction (a dead worker coming back) is noticed in the
-//! register/heartbeat handlers in `routes.rs`, which start reconciliation.
+//! register/heartbeat handlers in `api/internal.rs`, which start reconciliation.
 
 use std::time::Duration;
 

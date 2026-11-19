@@ -1,7 +1,7 @@
+mod api;
 mod config;
 mod failure_detector;
 mod meta_store;
-mod routes;
 mod state;
 mod storage;
 mod worker_client;
@@ -32,7 +32,7 @@ async fn main() -> std::io::Result<()> {
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     info!("listening on 0.0.0.0:{port}");
-    axum::serve(listener, routes::router(state))
+    axum::serve(listener, api::router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
 }
