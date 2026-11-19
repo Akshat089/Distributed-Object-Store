@@ -43,9 +43,10 @@ function Warn($text) { Write-Host "  [!!] $text" -ForegroundColor Yellow }
 function Cmd($text)  { Write-Host "  > $text" -ForegroundColor DarkGray }
 function Pause()     { if (-not $Fast) { Write-Host ""; Read-Host "  Press Enter to continue" | Out-Null } }
 
-function Cluster      { Invoke-RestMethod "$Controller/api/v1/cluster/status" }
-function Meta($id)    { Invoke-RestMethod "$Controller/api/v1/objects/$id/metadata" }
-function Chunks($id)  { Invoke-RestMethod "$Controller/api/v1/objects/$id/chunks" }
+# Every call has a timeout so a slow answer can't stall the presentation.
+function Cluster      { Invoke-RestMethod "$Controller/api/v1/cluster/status" -TimeoutSec 10 }
+function Meta($id)    { Invoke-RestMethod "$Controller/api/v1/objects/$id/metadata" -TimeoutSec 10 }
+function Chunks($id)  { Invoke-RestMethod "$Controller/api/v1/objects/$id/chunks" -TimeoutSec 10 }
 function WorkerPort($w) { 8080 + [int]($w -replace 'worker', '') }   # workerN -> host port 808N
 
 function WaitFor([scriptblock]$cond, [int]$seconds, [string]$what) {
@@ -201,14 +202,14 @@ Write-Host ""
 Cmd "docker stop $FailWorker"
 docker stop $FailWorker | Out-Null
 $t0 = Get-Date
-$dead = WaitFor { ((Cluster).workers | Where-Object worker_id -eq $FailWorker).status -eq "dead" } 30 "$FailWorker dead"
+$dead = WaitFor { ((Cluster).workers | Where-Object worker_id -eq $FailWorker).status -eq "dead" } 45 "$FailWorker dead"
 if ($dead) { Good ("$FailWorker marked DEAD after {0:N1} s (no heartbeat for 6 s)" -f ((Get-Date) - $t0).TotalSeconds) }
 
 $dl5 = Join-Path $WorkDir "during-failure.bin"
 $code = Download $id $dl5
 if ($code -eq "200" -and (Hash $dl5) -eq $h1) { Good "download during the failure: HTTP 200, SHA-256 matches (served from the other copies)" } else { Warn "download returned $code" }
 
-$healed = WaitFor { (Cluster).under_replicated_chunks -eq 0 } 60 "every chunk back to 2 live copies"
+$healed = WaitFor { (Cluster).under_replicated_chunks -eq 0 } 120 "every chunk back to 2 live copies"
 if ($healed) { Good ("re-replication done {0:N1} s after the stop; every chunk has 2 live copies again" -f ((Get-Date) - $t0).TotalSeconds) }
 ShowChunks $id
 Pause
@@ -220,10 +221,10 @@ if ($back) { Good "$FailWorker re-registered with the same id" }
 # Reconciliation: the returning worker should keep only chunks that metadata lists for it.
 $settled = WaitFor {
     $listed = @()
-    foreach ($o in (Invoke-RestMethod "$Controller/api/v1/objects?limit=1000").objects) {
+    foreach ($o in (Invoke-RestMethod "$Controller/api/v1/objects?limit=1000" -TimeoutSec 10).objects) {
         foreach ($c in (Meta $o.object_id).chunks) { if ($c.locations -contains $FailWorker) { $listed += $c.chunk_id } }
     }
-    $held = @((Invoke-RestMethod "http://localhost:$(WorkerPort $FailWorker)/internal/workers/$FailWorker/chunks").chunks | ForEach-Object { $_.chunk_id })
+    $held = @((Invoke-RestMethod "http://localhost:$(WorkerPort $FailWorker)/internal/workers/$FailWorker/chunks" -TimeoutSec 10).chunks | ForEach-Object { $_.chunk_id })
     (@($held | Where-Object { $listed -notcontains $_ })).Count -eq 0
 } 30 "reconciliation"
 if ($settled) { Good "reconciliation deleted $FailWorker's stale copies (policy: drop the extra copy, keep exactly 2)" }
