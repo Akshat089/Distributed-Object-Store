@@ -216,6 +216,40 @@ pub struct ClusterStatus {
     pub corrupt_copies_repaired: u64,
 }
 
+/// One copy of a chunk, as shown by `GET /api/v1/objects/{id}/chunks`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkLocationView {
+    pub worker_id: WorkerId,
+    /// False if the worker is dead or hasn't registered (yet).
+    pub alive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkView {
+    pub index: usize,
+    pub chunk_id: ChunkId,
+    pub size: u64,
+    pub checksum: String,
+    /// How many of `locations` are on alive workers.
+    pub live_copies: usize,
+    pub locations: Vec<ChunkLocationView>,
+}
+
+/// `GET /api/v1/objects/{id}/chunks`: where every chunk of one object lives
+/// right now. Used in the demo to show the 2 copies before, during and after
+/// a failure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectChunksView {
+    pub object_id: ObjectId,
+    pub name: String,
+    pub size: u64,
+    pub chunk_count: usize,
+    pub replication_factor: usize,
+    /// Chunks with fewer than `replication_factor` live copies.
+    pub under_replicated_chunks: usize,
+    pub chunks: Vec<ChunkView>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

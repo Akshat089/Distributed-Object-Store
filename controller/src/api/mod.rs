@@ -34,7 +34,9 @@ pub fn router(state: SharedState) -> Router {
             "/objects/{id}/metadata",
             get(objects::get_metadata).patch(objects::patch_metadata),
         )
-        .route("/cluster", get(cluster::cluster_status));
+        .route("/objects/{id}/chunks", get(cluster::object_chunks))
+        .route("/cluster", get(cluster::cluster_status))
+        .route("/cluster/status", get(cluster::cluster_status));
 
     let internal = Router::new()
         .route("/workers/register", post(internal::register_worker))
