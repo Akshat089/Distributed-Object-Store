@@ -20,6 +20,10 @@ impl AppState {
             .no_proxy()
             .build()
             .expect("failed to build HTTP client");
-        Arc::new(Self { config, store, http })
+        Arc::new(Self {
+            config,
+            store,
+            http,
+        })
     }
 }

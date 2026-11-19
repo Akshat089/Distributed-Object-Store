@@ -43,7 +43,8 @@ impl HashRing {
             return; // already present
         }
         for v in 0..self.vnodes {
-            self.ring.insert(hash64(&format!("{id}#{v}")), id.to_string());
+            self.ring
+                .insert(hash64(&format!("{id}#{v}")), id.to_string());
         }
     }
 
@@ -145,7 +146,11 @@ mod tests {
         let r = ring4();
         let t = r.pick_targets("x", 2, |w| w == "worker3");
         assert_eq!(t, vec!["worker3".to_string()]);
-        assert!(HashRing::default().pick_targets("x", 2, |_| true).is_empty());
+        assert!(
+            HashRing::default()
+                .pick_targets("x", 2, |_| true)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -170,9 +175,10 @@ mod tests {
         assert!(!r.contains("worker1"));
         assert_eq!(r.len(), 3);
         for i in 0..100 {
-            assert!(!r
-                .pick_targets(&format!("c{i}"), 3, |_| true)
-                .contains(&"worker1".to_string()));
+            assert!(
+                !r.pick_targets(&format!("c{i}"), 3, |_| true)
+                    .contains(&"worker1".to_string())
+            );
         }
     }
 }

@@ -172,7 +172,9 @@ async fn re_replicate(
         }
         match put_chunk_on(s, &w, &chunk.chunk_id, data.clone(), &chunk.checksum).await {
             Ok(()) => added.push(w),
-            Err(e) => warn!(chunk_id = %chunk.chunk_id, worker = %w, "re-replication PUT failed: {e}"),
+            Err(e) => {
+                warn!(chunk_id = %chunk.chunk_id, worker = %w, "re-replication PUT failed: {e}")
+            }
         }
     }
     if added.is_empty() {
@@ -243,7 +245,9 @@ async fn settle_chunk(s: &SharedState, object_id: ObjectId, chunk: &ChunkInfo) -
     for w in &extras {
         match delete_chunk_on(s, w, &chunk.chunk_id).await {
             Ok(()) => info!(chunk_id = %chunk.chunk_id, worker = %w, "deleted extra copy"),
-            Err(e) => warn!(chunk_id = %chunk.chunk_id, worker = %w, "deleting extra copy failed: {e}"),
+            Err(e) => {
+                warn!(chunk_id = %chunk.chunk_id, worker = %w, "deleting extra copy failed: {e}")
+            }
         }
     }
     Outcome::Trimmed

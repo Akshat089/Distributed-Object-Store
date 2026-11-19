@@ -208,7 +208,7 @@ pub struct ClusterStatus {
     pub under_replicated_chunks: usize,
     /// Chunks with no live copy at all.
     pub unavailable_chunks: usize,
-        /// Bad copies (corrupted or missing on disk) found since the controller started.
+    /// Bad copies (corrupted or missing on disk) found since the controller started.
     #[serde(default)]
     pub corrupt_copies_detected: u64,
     /// Bad copies that were overwritten with a verified good copy.

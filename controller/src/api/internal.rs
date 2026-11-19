@@ -27,7 +27,10 @@ pub async fn register_worker(
     }
     // A (re)starting worker may hold orphans, extra copies, or have lost
     // chunks. Compare its disk with the metadata in the background.
-    tokio::spawn(reconcile::reconcile_worker(s.clone(), req.worker_id.clone()));
+    tokio::spawn(reconcile::reconcile_worker(
+        s.clone(),
+        req.worker_id.clone(),
+    ));
     Json(RegisterResponse {
         worker_id: req.worker_id,
         heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
@@ -46,7 +49,10 @@ pub async fn heartbeat(
     if s.upsert_worker(&req.worker_id, &req.address) == Some(WorkerStatus::Dead) {
         // Was unreachable (e.g. network partition / paused) but never restarted.
         info!(worker = %req.worker_id, "worker is BACK (heartbeat resumed)");
-        tokio::spawn(reconcile::reconcile_worker(s.clone(), req.worker_id.clone()));
+        tokio::spawn(reconcile::reconcile_worker(
+            s.clone(),
+            req.worker_id.clone(),
+        ));
     }
     if let Some(mut w) = s.workers.get_mut(&req.worker_id) {
         w.chunk_count = req.chunk_count;

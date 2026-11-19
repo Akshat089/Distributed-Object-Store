@@ -1,9 +1,9 @@
 //! One error type for every handler; converts into a JSON HTTP response.
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

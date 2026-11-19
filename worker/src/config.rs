@@ -25,10 +25,10 @@ impl Config {
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(8081);
-        let advertise_addr = env::var("ADVERTISE_ADDR")
-            .unwrap_or_else(|_| format!("http://localhost:{port}"));
-        let controller_url = env::var("CONTROLLER_URL")
-            .unwrap_or_else(|_| "http://localhost:9000".into());
+        let advertise_addr =
+            env::var("ADVERTISE_ADDR").unwrap_or_else(|_| format!("http://localhost:{port}"));
+        let controller_url =
+            env::var("CONTROLLER_URL").unwrap_or_else(|_| "http://localhost:9000".into());
         let data_dir = env::var("DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(format!("./data/{worker_id}")));

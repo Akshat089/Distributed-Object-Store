@@ -58,7 +58,13 @@ pub async fn download_object(
     let safe_name: String = meta
         .name
         .chars()
-        .map(|c| if (c.is_ascii_graphic() && c != '"' && c != '\\') || c == ' ' { c } else { '_' })
+        .map(|c| {
+            if (c.is_ascii_graphic() && c != '"' && c != '\\') || c == ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{safe_name}\"")) {
         headers.insert(header::CONTENT_DISPOSITION, v);

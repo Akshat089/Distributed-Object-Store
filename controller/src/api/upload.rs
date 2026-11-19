@@ -183,8 +183,7 @@ async fn receive_file(
     let result: AppResult<()> = async {
         while let Some(piece) = field.chunk().await.map_err(|e| {
             multipart_error(e.status(), format!("upload interrupted: {}", e.body_text()))
-        })?
-        {
+        })? {
             hasher.update(&piece);
             size += piece.len() as u64;
             // Enforced here, not by axum's body limit (see MULTIPART_OVERHEAD).

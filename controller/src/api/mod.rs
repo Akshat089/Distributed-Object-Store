@@ -50,7 +50,10 @@ pub fn router(state: SharedState) -> Router {
     Router::new()
         .nest("/api/v1", api)
         .nest("/internal", internal)
-        .route("/health", get(|| async { Json(serde_json::json!({"status": "ok"})) }))
+        .route(
+            "/health",
+            get(|| async { Json(serde_json::json!({"status": "ok"})) }),
+        )
         // Unknown paths and wrong methods get the JSON error format too.
         .fallback(|| async { AppError::NotFound("no such endpoint".into()) })
         .method_not_allowed_fallback(|| async {

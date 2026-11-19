@@ -148,7 +148,9 @@ pub(crate) async fn fetch_verified(
     for w in holders {
         match get_chunk_from(s, w, &chunk.chunk_id).await {
             Ok(data) if sha256_hex(&data) == chunk.checksum => return Some(data),
-            Ok(_) => warn!(chunk_id = %chunk.chunk_id, worker = %w, "repair source failed checksum"),
+            Ok(_) => {
+                warn!(chunk_id = %chunk.chunk_id, worker = %w, "repair source failed checksum")
+            }
             Err(FetchError::Corrupted) => {
                 warn!(chunk_id = %chunk.chunk_id, worker = %w, "repair source is corrupted")
             }

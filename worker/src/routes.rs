@@ -8,9 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use common::{
-    AppError, AppResult, CHECKSUM_HEADER, CHUNK_SIZE, StoredChunk, WorkerChunkList,
-};
+use common::{AppError, AppResult, CHECKSUM_HEADER, CHUNK_SIZE, StoredChunk, WorkerChunkList};
 use serde_json::json;
 
 use crate::state::SharedState;
