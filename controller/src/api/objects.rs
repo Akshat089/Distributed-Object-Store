@@ -4,7 +4,7 @@
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, rejection::QueryRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -133,18 +133,20 @@ pub async fn delete_object(
 /// GET /api/v1/objects?offset=0&limit=100
 pub async fn list_objects(
     State(s): State<SharedState>,
-    Query(q): Query<ListQuery>,
-) -> Json<ListObjectsResponse> {
+    query: Result<Query<ListQuery>, QueryRejection>,
+) -> AppResult<Json<ListObjectsResponse>> {
+    // A bad query string (`?limit=abc`) gets the JSON error format too.
+    let Query(q) = query.map_err(|e| AppError::BadRequest(e.body_text()))?;
     let mut all: Vec<_> = s.objects.iter().map(|o| o.summary()).collect();
     all.sort_by_key(|o| o.created_at);
 
     let limit = q.limit.clamp(1, 1000);
     let total = all.len();
     let objects = all.into_iter().skip(q.offset).take(limit).collect();
-    Json(ListObjectsResponse {
+    Ok(Json(ListObjectsResponse {
         total,
         offset: q.offset,
         limit,
         objects,
-    })
+    }))
 }

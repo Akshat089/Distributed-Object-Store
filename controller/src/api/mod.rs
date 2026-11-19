@@ -12,19 +12,23 @@ use axum::{
     extract::DefaultBodyLimit,
     routing::{get, post},
 };
-use common::{AppError, AppResult, ObjectId};
+use common::{AppError, AppResult, MULTIPART_OVERHEAD, ObjectId};
 
 use crate::state::SharedState;
 
 pub fn router(state: SharedState) -> Router {
-    let max_upload = state.config.max_upload_bytes;
+    // The handler enforces MAX_UPLOAD_MB itself; see MULTIPART_OVERHEAD.
+    let body_limit = state
+        .config
+        .max_upload_bytes
+        .saturating_add(MULTIPART_OVERHEAD);
 
     let api = Router::new()
         .route(
             "/objects",
             get(objects::list_objects)
                 .post(upload::upload_object)
-                .layer(DefaultBodyLimit::max(max_upload)),
+                .layer(DefaultBodyLimit::max(body_limit)),
         )
         .route(
             "/objects/{id}",
@@ -47,7 +51,11 @@ pub fn router(state: SharedState) -> Router {
         .nest("/api/v1", api)
         .nest("/internal", internal)
         .route("/health", get(|| async { Json(serde_json::json!({"status": "ok"})) }))
+        // Unknown paths and wrong methods get the JSON error format too.
         .fallback(|| async { AppError::NotFound("no such endpoint".into()) })
+        .method_not_allowed_fallback(|| async {
+            AppError::MethodNotAllowed("method not allowed on this endpoint".into())
+        })
         .with_state(state)
 }
 

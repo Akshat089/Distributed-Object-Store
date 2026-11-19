@@ -8,13 +8,13 @@ use axum::{
         Multipart, State,
         multipart::{Field, MultipartRejection},
     },
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header},
 };
 use bytes::BytesMut;
 use chrono::Utc;
 use common::{
-    AppError, AppResult, CHUNK_SIZE, ChunkInfo, MAX_INFLIGHT_CHUNKS, MetadataPatch, ObjectId,
-    ObjectMeta, StreamingHash,
+    AppError, AppResult, CHUNK_SIZE, ChunkInfo, MAX_INFLIGHT_CHUNKS, MULTIPART_OVERHEAD,
+    MetadataPatch, ObjectId, ObjectMeta, StreamingHash,
 };
 use tokio::task::JoinSet;
 use tracing::{info, warn};
@@ -27,9 +27,19 @@ use crate::{state::SharedState, storage::placement};
 ///   metadata  optional — JSON object of string key/values
 pub async fn upload_object(
     State(s): State<SharedState>,
+    headers: HeaderMap,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> AppResult<(StatusCode, Json<ObjectMeta>)> {
-    let mut mp = multipart.map_err(|e| AppError::BadRequest(e.body_text()))?;
+    // Refuse an obviously too-large upload before reading any of it.
+    let declared: Option<usize> = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok());
+    if declared.is_some_and(|n| n > s.config.max_upload_bytes.saturating_add(MULTIPART_OVERHEAD)) {
+        return Err(too_large(s.config.max_upload_bytes));
+    }
+
+    let mut mp = multipart.map_err(|e| multipart_error(e.status(), e.body_text()))?;
     let object_id = Uuid::new_v4();
 
     // Tell reconciliation these chunks are not orphans (metadata not saved yet).
@@ -46,7 +56,7 @@ pub async fn upload_object(
         while let Some(mut field) = mp
             .next_field()
             .await
-            .map_err(|e| AppError::BadRequest(e.body_text()))?
+            .map_err(|e| multipart_error(e.status(), e.body_text()))?
         {
             let field_name = field.name().unwrap_or_default().to_string();
             match field_name.as_str() {
@@ -64,7 +74,7 @@ pub async fn upload_object(
                     let text = field
                         .text()
                         .await
-                        .map_err(|e| AppError::BadRequest(e.body_text()))?;
+                        .map_err(|e| multipart_error(e.status(), e.body_text()))?;
                     if !text.trim().is_empty() {
                         let patch: MetadataPatch = serde_json::from_str(&text).map_err(|e| {
                             AppError::BadRequest(format!(
@@ -129,6 +139,23 @@ impl Drop for PendingGuard<'_> {
     }
 }
 
+/// Multipart errors keep their HTTP status (413 if axum's body limit was
+/// hit, 400 otherwise) but get the usual JSON error body.
+fn multipart_error(status: StatusCode, text: String) -> AppError {
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        AppError::PayloadTooLarge(format!("upload too large: {text}"))
+    } else {
+        AppError::BadRequest(text)
+    }
+}
+
+fn too_large(max_bytes: usize) -> AppError {
+    AppError::PayloadTooLarge(format!(
+        "upload is larger than MAX_UPLOAD_MB ({} MB)",
+        max_bytes / (1024 * 1024)
+    ))
+}
+
 fn detect_content_type(declared: Option<&str>, file_name: &str) -> String {
     match declared {
         Some(ct) if !ct.is_empty() && ct != "application/octet-stream" => ct.to_string(),
@@ -154,13 +181,16 @@ async fn receive_file(
     let mut tasks: JoinSet<AppResult<ChunkInfo>> = JoinSet::new();
 
     let result: AppResult<()> = async {
-        while let Some(piece) = field
-            .chunk()
-            .await
-            .map_err(|e| AppError::BadRequest(format!("upload interrupted: {}", e.body_text())))?
+        while let Some(piece) = field.chunk().await.map_err(|e| {
+            multipart_error(e.status(), format!("upload interrupted: {}", e.body_text()))
+        })?
         {
             hasher.update(&piece);
             size += piece.len() as u64;
+            // Enforced here, not by axum's body limit (see MULTIPART_OVERHEAD).
+            if size > s.config.max_upload_bytes as u64 {
+                return Err(too_large(s.config.max_upload_bytes));
+            }
 
             let mut rest = &piece[..];
             while !rest.is_empty() {

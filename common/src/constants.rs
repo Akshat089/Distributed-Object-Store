@@ -46,6 +46,13 @@ pub const MAX_INFLIGHT_CHUNKS: usize = 8;
 /// How many chunks of one download are fetched ahead.
 pub const DOWNLOAD_PREFETCH: usize = 4;
 
+/// Extra room on top of MAX_UPLOAD_MB for the multipart framing and the
+/// `metadata` field. The upload handler enforces MAX_UPLOAD_MB on the file
+/// bytes itself (clean JSON 413); axum's own body limit sits this much higher
+/// so it never trips first (when it does, the multipart stream stalls
+/// instead of failing, and the client never gets a response).
+pub const MULTIPART_OVERHEAD: usize = 1024 * 1024;
+
 // ─────────────────────────────── Integrity (worker) ───────────────────
 
 /// Default for `SCRUB_INTERVAL_SECS`: how often a worker's scrubber

@@ -16,8 +16,14 @@ pub enum AppError {
     BadRequest(String),
     #[error("{0}")]
     NotFound(String),
+    /// Right path, wrong HTTP method.
+    #[error("{0}")]
+    MethodNotAllowed(String),
     #[error("{0}")]
     Conflict(String),
+    /// Upload bigger than MAX_UPLOAD_MB.
+    #[error("{0}")]
+    PayloadTooLarge(String),
     /// Stored data failed checksum verification.
     #[error("{0}")]
     Corrupted(String),
@@ -40,7 +46,9 @@ impl AppError {
         match self {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
             AppError::Conflict(_) | AppError::Corrupted(_) => StatusCode::CONFLICT,
+            AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -50,7 +58,9 @@ impl AppError {
         match self {
             AppError::BadRequest(_) => "bad_request",
             AppError::NotFound(_) => "not_found",
+            AppError::MethodNotAllowed(_) => "method_not_allowed",
             AppError::Conflict(_) => "conflict",
+            AppError::PayloadTooLarge(_) => "payload_too_large",
             AppError::Corrupted(_) => "corrupted",
             AppError::Unavailable(_) => "unavailable",
             AppError::Internal(_) => "internal_error",
