@@ -1,10 +1,14 @@
+mod config;
 mod heartbeat;
 mod routes;
 mod scrubber;
 mod state;
+mod store;
 
 use common::runtime::{init_tracing, load_env_file, shutdown_signal};
-use state::{AppState, ChunkStore, Config};
+use config::Config;
+use state::AppState;
+use store::ChunkStore;
 use tokio::net::TcpListener;
 use tracing::info;
 
