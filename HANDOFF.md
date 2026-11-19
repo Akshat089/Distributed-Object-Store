@@ -1,189 +1,144 @@
 # Handoff: Mini Distributed Cloud Object Store (Rust)
 
-Phases 1–7 are **done and tested**. What's left: **Phase 8** (make the codebase
-more modular, plus the demo script) and **Phase 9** (README and polish).
+**Status: all 9 phases are done and tested.** The README is now the main
+document (how to run, API, config, design, tests, demo, limitations). This file
+lists what changed in Phases 8–9, things to know before the presentation, and
+what could still be done.
 
 ---
 
-## 1. What the system does today
+## 1. Phases at a glance
 
-```
-                 ┌─────────────────────────────┐
-  client ──HTTP──►  controller  (port 9000)     │  metadata = source of truth
-                 │  - REST API /api/v1/...      │  (one JSON file per object,
-                 │  - chunking + placement      │   in the controller volume)
-                 │  - failure detection         │
-                 │  - re-replication / repair   │
-                 └──────┬───────┬───────┬───────┘
-                        │       │       │   /internal/... (HTTP)
-                   worker1  worker2  worker3  worker4   (each: own volume,
-                   chunk bytes + .sha256 files on disk,   heartbeat, scrubber)
-```
+| Phase | What | Who | Where |
+|---|---|---|---|
+| 1 | Shared types, errors, hash ring, SHA-256 | Akshat | `common/` |
+| 2 | Worker on-disk chunk store, register + heartbeat | Akshat | `worker/` |
+| 3 | Controller: upload, download, metadata, list, delete, persistence | Akshat | `controller/src/api`, `storage/placement.rs` |
+| 4 | Docker: two-stage Dockerfile, compose with 1 + 4 containers | Lakshya | root |
+| 5 | Failure detection, re-replication | Lakshya | `failure_detector.rs`, `storage/repair.rs` |
+| 6 | Recovery / reconciliation | Lakshya | `storage/reconcile.rs` |
+| 7 | Integrity: scrubber, repair of bad copies, counters | Akshat | `worker/src/scrubber.rs`, `storage/integrity.rs` |
+| 8 | Modular refactor, demo endpoints, `demo.ps1` | Lakshya | see 2a–2c |
+| 9 | README, JSON errors everywhere, edge cases, cleanup | Lakshya | see 2d–2f |
 
-- Objects are split into **1 MB chunks**. Each chunk is stored on **2 different workers**,
-  chosen with a consistent hash ring.
-- The client only talks to the controller. It never needs to know where chunks are stored.
-- Every chunk has a SHA-256. Workers check it on every write and every read.
-  The controller checks it again before returning data to a client.
+---
 
-### Done, by phase
+## 2. What changed in Phases 8–9
 
-| Phase | What it covers | Where |
-|---|---|---|
-| 1 | Shared types, errors (JSON + correct HTTP codes), hash ring, SHA-256 helpers | `common/` |
-| 2 | Worker: on-disk chunk store (atomic write via tmp+rename, checksum on every read), register + heartbeat | `worker/` |
-| 3 | Controller: upload (streamed, chunked, 2 copies), download (streamed, verified), metadata GET/PATCH, list (paginated), delete, `/cluster` status, metadata persisted to disk | `controller/` |
-| 4 | Docker: two-stage `Dockerfile` (one image with both binaries), `docker-compose.yml` (1 controller + 4 workers, named volumes, `container_name` set) | root |
-| 5 | Failure detection (6 s heartbeat timeout), automatic re-replication back to 2 copies | `controller/src/heartbeat.rs`, `replication.rs` |
-| 6 | Recovery: a returning worker is reconciled (orphan and extra copies deleted, mismatched copies dropped) | `controller/src/replication.rs` |
-| 7 | Data integrity: worker **scrubber** re-hashes every chunk every `SCRUB_INTERVAL_SECS`. Bad or missing copies are overwritten from a good copy. Downloads skip bad copies and repair them. Counters appear in `/cluster`. | `worker/src/scrubber.rs`, `controller/src/replication.rs` |
+### 2a. Refactor (behaviour unchanged)
 
-### API (all JSON errors look like `{"error":"not_found","message":"..."}`)
+Done as in the old plan, one move per commit, with clippy + unit tests after
+each and both integration suites after the controller and worker moves.
+Every moved file was checked line by line: only `use` lines, `pub`, and
+section headers differ.
 
-| Method | Path | Notes |
-|---|---|---|
-| POST | `/api/v1/objects` | multipart: `file` (required), `metadata` (optional JSON). Returns 201 + full metadata |
-| GET | `/api/v1/objects/{id}` | streams the original bytes with the right `Content-Type` |
-| GET | `/api/v1/objects/{id}/metadata` | system + custom metadata, **including chunk locations** |
-| PATCH | `/api/v1/objects/{id}/metadata` | `{"k":"v"}` adds or updates, `{"k":null}` removes |
-| DELETE | `/api/v1/objects/{id}` | 204 |
-| GET | `/api/v1/objects?offset=&limit=` | paginated list |
-| GET | `/api/v1/cluster` | workers alive/dead, `under_replicated_chunks`, `unavailable_chunks`, `corrupt_copies_detected/repaired` |
-| — | `/internal/...` | worker register/heartbeat, chunk PUT/GET/DELETE, worker chunk list, corrupt report |
+- `controller/src/replication.rs` (830 lines) → `storage/{mod,placement,repair,reconcile,integrity}.rs`
+  and `worker_client.rs`. The "drop the extra copy" policy doc is now at the top of `storage/mod.rs`.
+- `controller/src/routes.rs` (490 lines) → `api/{mod,upload,objects,cluster,internal}.rs`.
+- `controller/src/state.rs` → `config.rs` + `meta_store.rs` + `state.rs`.
+- `controller/src/heartbeat.rs` → `failure_detector.rs` (rename only).
+- `worker/src/state.rs` → `config.rs` + `store.rs` + `state.rs`.
+- `load_env_file`, `init_tracing`, `shutdown_signal` → `common/src/runtime.rs`
+  (both `main.rs` files are now ~30 lines; `dotenvy`/`tracing-subscriber` moved to `common`).
+- Every constant (chunk size, RF, heartbeat, repair interval/concurrency, startup grace,
+  upload/download concurrency, default scrub interval) → `common/src/constants.rs`.
+  They're re-exported, so `common::CHUNK_SIZE` etc. still work.
 
-### How to run and test (Windows PowerShell, from the repo root)
+### 2b. Demo-visibility endpoints (from the original Phase 8 in the spec)
+
+- `GET /api/v1/objects/{id}/chunks`: each chunk with its copies and whether
+  each holder is alive, plus `under_replicated_chunks`.
+- `GET /api/v1/cluster/status`: same as `/api/v1/cluster` (the spec's name for it).
+
+### 2c. `scripts/demo.ps1`
+
+The 6 required demonstrations, in order, with a pause between steps (`-Fast` skips them):
+object storage, chunking, replication, metadata, worker failure (stop → dead →
+download still works → re-replicated → start → reconciled), and data integrity
+(read-time detection + repair, then the scrubber fixing an unread copy).
+After steps 5 and 6 it prints the matching controller log lines.
+By default it uploads the Windows wallpaper JPEG (a real ~5 MB image);
+`-SampleFile <path>` uses any file, e.g. a PDF.
+
+### 2d. Bug fixed: over-size uploads hung forever
+
+The old plan said an upload over `MAX_UPLOAD_MB` "returns 413 as plain text".
+In fact it **never answered**: when axum's body limit trips in the middle of a
+multipart stream, the stream stalls instead of failing, so the request hung
+until the client gave up. Now the handler enforces the limit itself:
+- `Content-Length` too big → 413 at once, before reading anything;
+- chunked uploads → 413 as soon as the file bytes pass the limit.
+
+axum's own limit is set 1 MiB higher (`MULTIPART_OVERHEAD`) so it never trips first.
+Both paths are tested.
+
+### 2e. Consistent JSON errors
+
+Every error now uses `{"error","message"}`, including:
+- 413 `payload_too_large` (new `AppError` variant);
+- 405 `method_not_allowed` (new variant, via `method_not_allowed_fallback`);
+- a bad list query string (`?limit=abc`), which is now 400 JSON instead of axum's plain text.
+
+### 2f. Cleanup
+
+- Deleted `meta.json`, `patch.json`, `run.txt` (folded into the README), and the
+  stray duplicate `controller/replication.rs`.
+- Added `.env.controller.example` and `.env.worker.example` (run.txt referred to an
+  `.env.example` that never existed). `.gitignore` allows `.env.*.example`.
+- `test-phase-7.ps1` moved to `scripts/`. `test-phases-4-6.ps1` now builds with `docker build`.
+- Logs: ANSI colours only when stdout is a terminal, so `docker logs` is plain text.
+  `LOG_COLOR=1/0` overrides.
+- `cargo fmt --all` applied (own commit). `cargo clippy --workspace --all-targets -- -D warnings` is clean.
+- New `scripts/check.ps1`: fmt + clippy + tests in Docker (no local Rust needed).
+- New `scripts/test-edge-cases.ps1` covering every Phase 9 edge case.
+
+---
+
+## 3. How to verify everything (definition of done)
+
+From a clean slate (this **wipes all stored data**):
 
 ```powershell
-cargo test --workspace                                   # 11 unit tests (common)
-docker build -t distributed-object-store:latest .        # build image (ALWAYS after code changes)
-docker compose up -d --force-recreate                    # start 5 containers
+docker compose down -v
+powershell -ExecutionPolicy Bypass -File scripts\check.ps1            # fmt, clippy, 11 unit tests
+docker build -t distributed-object-store:latest .
+docker compose up -d
 powershell -ExecutionPolicy Bypass -File scripts\test-phases-4-6.ps1 -NoBuild
 powershell -ExecutionPolicy Bypass -File scripts\test-phase-7.ps1   -NoBuild
-docker compose logs -f controller                        # watch what happens
+powershell -ExecutionPolicy Bypass -File scripts\test-edge-cases.ps1 -NoBuild
+powershell -ExecutionPolicy Bypass -File scripts\demo.ps1 -Fast
 ```
-Both scripts must end with **`ALL CHECKS PASSED`**. They are the safety net for the
-refactor below.
 
-### Things that will bite you
-
-- **Build the image with `docker build`, not `docker compose up --build`.** All 5 services share one image, and parallel builds collide (`image already exists`). Compose uses `pull_policy: never`.
-- **Never run `docker compose down -v` unless you mean it.** If the controller's volume is wiped, reconciliation treats every chunk on every worker as an orphan and deletes it.
-- Port **8080** is taken on Akshat's machine, so the controller uses **9000**.
-- In PowerShell use **`curl.exe`**, not `curl`. Pass JSON through a file (`-d "@patch.json"`), because PS 5.1 mangles quotes.
-- Rust **1.88+** is needed (edition 2024, `if let ... &&` chains).
-- When both copies of a chunk are corrupted, the download starts with HTTP 200 and is then **aborted** (curl exit 18), because headers are already sent. No bad bytes are ever returned. Document this as a known limitation; don't "fix" it by buffering whole objects.
+Every script must end with `ALL CHECKS PASSED` (the demo ends with `Demo complete.`).
+Results of this run are in section 5.
 
 ---
 
-## 2. Phase 8: modular codebase + demo script
+## 4. Things that will bite you
 
-### 8a. Refactor (behaviour must not change)
-
-Today `controller/src/replication.rs` is **~830 lines** covering 5 jobs, and
-`controller/src/routes.rs` is **~490 lines** covering 3. Split them by responsibility.
-
-**Target layout, controller:**
-```
-controller/src/
-  main.rs              startup only: config, state, spawn tasks, serve
-  config.rs            Config::from_env            (from state.rs)
-  state.rs             AppState, WorkerInfo, IntegrityStats, worker registry fns
-  meta_store.rs        MetaStore                   (from state.rs)
-  worker_client.rs     put/get/delete/list chunk HTTP calls + FetchError
-  failure_detector.rs  heartbeat monitor           (rename of heartbeat.rs)
-  storage/
-    mod.rs
-    placement.rs       place_chunk, fetch_chunk, delete_chunks, fetch_verified
-    repair.rs          Phase 5: repair_loop, repair_under_replicated, fix/re_replicate/settle
-    reconcile.rs       Phase 6: reconcile_worker
-    integrity.rs       Phase 7: repair_bad_copy
-  api/
-    mod.rs             router() only
-    objects.rs         download, metadata GET/PATCH, delete, list
-    upload.rs          upload_object, receive_file, collect_one, PendingGuard, detect_content_type
-    cluster.rs         cluster_status
-    internal.rs        register_worker, heartbeat, report_corrupt
-```
-
-**Target layout, worker:**
-```
-worker/src/
-  main.rs
-  config.rs     Config::from_env   (from state.rs)
-  store.rs      ChunkStore + write_synced (from state.rs)
-  state.rs      AppState only
-  routes.rs     unchanged
-  heartbeat.rs  unchanged
-  scrubber.rs   unchanged
-```
-
-**Remove duplication:**
-- `load_env_file()` and `shutdown_signal()` are copy-pasted in both `main.rs` files. Also the
-  `tracing_subscriber` setup. Move them into `common/src/runtime.rs`
-  (`common` then needs `tokio` with the `signal` feature, plus `dotenvy` and `tracing-subscriber`).
-- Put the timing constants in one place. `REPAIR_INTERVAL`, `REPAIR_CONCURRENCY` and the
-  startup grace are in `replication.rs`, while heartbeat values are in `common/lib.rs`.
-
-**Rules for the refactor:**
-1. **Move code, don't rewrite it.** Change only `mod`/`use` lines and visibility (`pub(crate)`).
-2. One move per commit. After each one: `cargo clippy --workspace --all-targets` (no warnings),
-   `cargo test --workspace`, rebuild the image, and run **both** test scripts.
-3. Keep the doc comments. They explain the design decisions (drop-extra policy,
-   startup grace, pending uploads, persist_object locking).
-4. Run `cargo fmt --all` at the end, as its own commit.
-
-### 8b. Demo script `scripts/demo.ps1`
-
-The spec's section 10 lists **6 required demonstrations**. Write one script that walks through
-them **in order**, with a heading and a `Read-Host "Press Enter to continue"` between steps,
-so it can be presented live. Reuse the helpers from the two test scripts.
-
-| # | Demonstration | What to show |
-|---|---|---|
-| 1 | Object storage | upload a file (use a real image or PDF), download it, show both SHA-256s match |
-| 2 | Chunking & distribution | upload a file > 1 MB; print chunk index, size, workers |
-| 3 | Replication | for every chunk, show 2 locations on different workers; show `/cluster` chunk counts per worker |
-| 4 | Metadata | upload with custom metadata, GET it, PATCH it (add/update/remove), GET again; show the chunks didn't change |
-| 5 | Worker failure | `/cluster` before → `docker stop worker2` → wait for DEAD → download still works → wait for `under_replicated_chunks = 0` → `docker start worker2` → reconciliation → every chunk has 2 copies again |
-| 6 | Data integrity | `docker exec` to corrupt a chunk → worker returns 409 → download still correct → copy repaired → also show the scrubber fixing one that was never read; show the counters |
-
-Nice to have: a `-Fast` switch that skips the pauses, and printing the matching
-`docker compose logs controller --since 30s` lines after steps 5 and 6.
+- **Rebuild the image after every code change** (`docker build ...`, then
+  `docker compose up -d --force-recreate`). Compose does not rebuild it for you.
+- **`docker compose down -v` deletes everything**, and if only the controller's
+  volume is lost, reconciliation deletes every chunk as an orphan.
+- PowerShell: use **`curl.exe`**; pass JSON through a file (PS 5.1 strips quotes).
+- Port 8080 is taken on Akshat's machine; the controller uses **9000**.
+- Wait for 4 alive workers (and ~12 s after a controller restart) before
+  uploading or demoing failures; the scripts already do this.
+- Both copies corrupted → the download is **aborted** mid-stream (curl exit 18).
+  This is documented as a known limitation and is deliberate (no whole-object buffering).
 
 ---
 
-## 3. Phase 9: README and polish
+## 5. Verification results
 
-**`README.md`** (the spec requires build/start/interaction instructions):
-- What it is, the architecture diagram above, and the tech used (Rust, axum, tokio, Docker)
-- Prerequisites: Docker Desktop, plus Rust 1.88+ only for local dev
-- Quick start: `docker build` → `docker compose up -d` → upload/download with `curl.exe`
-- Full API reference with one `curl.exe` example per endpoint, plus the error table (400/404/409/500/503)
-- Configuration: every env var (`PORT`, `DATA_DIR`, `MAX_UPLOAD_MB`, `WORKER_ID`,
-  `ADVERTISE_ADDR`, `CONTROLLER_URL`, `SCRUB_INTERVAL_SECS`, `RUST_LOG`)
-- Design decisions: consistent hashing, chunk ID format `<uuid>_<index>`, atomic writes,
-  "drop the extra copy" policy, 6 s failure detection, startup grace, scrubber,
-  metadata as the source of truth
-- How to run the tests and the demo
-- Known limitations: single controller (single point of failure), aborted download when
-  both copies are bad, wiping the controller volume deletes all data, no auth
+_Filled in after the final clean run; see the commit that updated this section._
 
-**Cleanup:**
-- Delete the stray `meta.json` and `patch.json` in the repo root.
-- Fold `run.txt` into the README and delete it. It also mentions a `.env.example`
-  that doesn't exist: either add `.env.example` + `.env.controller.example` or drop that section.
-- Turn off ANSI colour codes in logs: `.with_ansi(false)` on the `tracing_subscriber`, or make it
-  conditional on an env var (`LOG_COLOR=0`) set in `docker-compose.yml`.
-- `Makefile` or `scripts/` shortcuts are optional (Windows users mostly run the `.ps1` files).
+---
 
-**Edge cases to check (they should already work; just verify and list them in the README):**
-- empty file → 201 with `chunk_count: 0`, downloads as 0 bytes
-- missing `file` field → 400; bad `metadata` JSON → 400; bad PATCH body → 400
-- unknown / malformed object id → 404 / 400
-- upload with only 1 worker alive → 503
-- Upload larger than `MAX_UPLOAD_MB` → axum returns **413 as plain text, not JSON**. Optionally map it to the JSON error format.
+## 6. Possible next steps (not required by the spec)
 
-**Definition of done:** both test scripts and `demo.ps1` pass on a fresh
-`docker compose down -v && docker build ... && docker compose up -d`; `cargo clippy` is
-clean; `cargo fmt --check` passes; the README is enough for someone who has never seen the
-project to run the demo.
+- Unit tests for the repair / reconciliation decision logic (currently covered
+  only by the integration scripts).
+- Persist the integrity counters (they reset on controller restart).
+- Replicate the controller's metadata (Raft) to remove the single point of failure.
+- Zone-aware placement (2 copies in different racks/zones).
